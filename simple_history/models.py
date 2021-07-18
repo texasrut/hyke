@@ -1,0 +1,2 @@
+class HistoricalRecords():
+    pass
