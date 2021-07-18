@@ -22,10 +22,13 @@ from structlog import get_logger
 
 logger = get_logger(__name__)
 
+
 def get_hike_system_scheduled():
     print("Scheduled task is started for Hyke System...")
 
-    items = StatusEngine.objects.filter(Q(outcome=-1) & Q(formationtype__startswith="Hyke System"))
+    items = StatusEngine.objects.filter(
+        Q(outcome=-1) & Q(formationtype__startswith="Hyke System")
+    )
 
     print("Active items in the job: " + str(len(items)))
 
@@ -42,16 +45,19 @@ def scheduled_system(items):
                 reportdetails = item.data.split("---")
                 reportname = reportdetails[1].strip()
                 reportyear = reportdetails[0].strip()
-                reportstate = reportdetails[2].strip() if len(reportdetails) == 3 else None
+                reportstate = (
+                    reportdetails[2].strip() if len(reportdetails) == 3 else None
+                )
 
                 data_filter = Q(data=f"{reportyear} --- {reportname}")
                 if reportstate:
-                    data_filter |= Q(data=f"{reportyear} --- {reportname} --- {reportstate}")
+                    data_filter |= Q(
+                        data=f"{reportyear} --- {reportname} --- {reportstate}"
+                    )
 
-                SEs = StatusEngine.objects.filter(email=item.email, process="Annual Report Reminder",
-                                                  outcome=-1).filter(
-                    data_filter
-                )
+                SEs = StatusEngine.objects.filter(
+                    email=item.email, process="Annual Report Reminder", outcome=-1
+                ).filter(data_filter)
                 for se in SEs:
                     se.outcome = 1
                     se.executed = timezone.now()
@@ -76,13 +82,19 @@ def scheduled_system(items):
                     try:
                         send_client_onboarding_survey(email=item.email)
                     except Exception as e:
-                        logger.exception(f"Can't process Onboarding NPS Survey for status engine id={item.id}")
+                        logger.exception(
+                            f"Can't process Onboarding NPS Survey for status engine id={item.id}"
+                        )
 
                 elif item.process == "Payment error email":
                     send_transactional_email(
-                        email=item.email, template="[Action required] - Please update your payment information",
+                        email=item.email,
+                        template="[Action required] - Please update your payment information",
                     )
-                    print("[Action required] - Please update your payment information email is sent to " + item.email)
+                    print(
+                        "[Action required] - Please update your payment information email is sent to "
+                        + item.email
+                    )
                 elif item.process == "Running flow":
                     ps = ProgressStatus.objects.get(email=item.email)
                     ps.bookkeepingsetupstatus = "completed"
@@ -115,7 +127,10 @@ def scheduled_system(items):
                     print("Dropbox folders are created for " + item.email)
 
                     has_run_before = StatusEngine.objects.filter(
-                        email=item.email, process=item.process, processstate=item.processstate, outcome=1,
+                        email=item.email,
+                        process=item.process,
+                        processstate=item.processstate,
+                        outcome=1,
                     ).exists()
 
                     if has_run_before:
@@ -125,9 +140,10 @@ def scheduled_system(items):
                             )
                         )
 
-
                 elif item.process == "Kickoff Questionnaire Completed":
-                    progress_status = ProgressStatus.objects.filter(email__iexact=item.email).first()
+                    progress_status = ProgressStatus.objects.filter(
+                        email__iexact=item.email
+                    ).first()
                     if progress_status:
                         progress_status.questionnairestatus = "scheduled"
                         progress_status.save()
@@ -142,7 +158,9 @@ def scheduled_system(items):
                         )
 
                 elif item.process == "Kickoff Call Scheduled":
-                    progress_status = ProgressStatus.objects.get(email__iexact=item.email)
+                    progress_status = ProgressStatus.objects.get(
+                        email__iexact=item.email
+                    )
                     progress_status.questionnairestatus = "scheduled"
                     progress_status.save()
 
@@ -156,7 +174,9 @@ def scheduled_system(items):
                     )
 
                 elif item.process == "Kickoff Call Cancelled":
-                    progress_status = ProgressStatus.objects.get(email__iexact=item.email)
+                    progress_status = ProgressStatus.objects.get(
+                        email__iexact=item.email
+                    )
                     progress_status.questionnairestatus = "reschedule"
                     progress_status.save()
 
@@ -179,7 +199,9 @@ def scheduled_system(items):
                     )
 
                 elif item.process == "BK Training Call Cancelled":
-                    progress_status = ProgressStatus.objects.get(email__iexact=item.email)
+                    progress_status = ProgressStatus.objects.get(
+                        email__iexact=item.email
+                    )
                     progress_status.bookkeepingsetupstatus = "reschedule"
                     progress_status.save()
 
@@ -202,7 +224,9 @@ def scheduled_system(items):
                         process="BK Training Call Cancelled",
                     )
                 elif item.process == "Transition Plan Submitted":
-                    progress_status = ProgressStatus.objects.get(email__iexact=item.email)
+                    progress_status = ProgressStatus.objects.get(
+                        email__iexact=item.email
+                    )
                     progress_status.questionnairestatus = "submitted"
                     progress_status.save()
 
