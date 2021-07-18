@@ -22,8 +22,7 @@ from structlog import get_logger
 
 logger = get_logger(__name__)
 
-
-def scheduled_system():
+def get_hike_system_scheduled():
     print("Scheduled task is started for Hyke System...")
 
     items = StatusEngine.objects.filter(Q(outcome=-1) & Q(formationtype__startswith="Hyke System"))
@@ -32,196 +31,199 @@ def scheduled_system():
 
     db.close_old_connections()
 
+    return items
+
+
+def scheduled_system(items):
     for item in items:
-        if item.process == "Client Onboarding Survey" and item.processstate == 1 and item.outcome == -1:
-            try:
-                send_client_onboarding_survey(email=item.email)
-            except Exception as e:
-                logger.exception(f"Can't process Onboarding NPS Survey for status engine id={item.id}")
+        if item.outcome == StatusEngine.SCHEDULED:
+            if item.process == "Annual Report Uploaded":
 
-        elif item.process == "Payment error email" and item.processstate == 1 and item.outcome == -1:
-            send_transactional_email(
-                email=item.email, template="[Action required] - Please update your payment information",
-            )
-            print("[Action required] - Please update your payment information email is sent to " + item.email)
-        elif item.process == "Running flow" and item.processstate == 1 and item.outcome == -1:
-            ps = ProgressStatus.objects.get(email=item.email)
-            ps.bookkeepingsetupstatus = "completed"
-            ps.taxsetupstatus = "completed2"
-            ps.save()
+                reportdetails = item.data.split("---")
+                reportname = reportdetails[1].strip()
+                reportyear = reportdetails[0].strip()
+                reportstate = reportdetails[2].strip() if len(reportdetails) == 3 else None
 
-            StatusEngine.objects.get_or_create(
-                email=item.email,
-                process="Schedule Email",
-                formationtype="Hyke Daily",
-                processstate=1,
-                outcome=StatusEngine.SCHEDULED,
-                data="What's upcoming with Collective?",
-                defaults={"executed": timezone.now() + relativedelta(days=1)},
-            )
+                data_filter = Q(data=f"{reportyear} --- {reportname}")
+                if reportstate:
+                    data_filter |= Q(data=f"{reportyear} --- {reportname} --- {reportstate}")
 
-            StatusEngine.objects.get_or_create(
-                email=item.email,
-                process="Running flow",
-                formationtype="Hyke System",
-                processstate=2,
-                defaults={"outcome": StatusEngine.SCHEDULED, "data": "---"},
-            )
+                SEs = StatusEngine.objects.filter(email=item.email, process="Annual Report Reminder",
+                                                  outcome=-1).filter(
+                    data_filter
+                )
+                for se in SEs:
+                    se.outcome = 1
+                    se.executed = timezone.now()
+                    se.save()
 
-            schedule_onboarding_survey_sequence(email=item.email)
-            schedule_next_running_survey_sequence(email=item.email)
+                # complete this before we schedule the next reminder
+                item.outcome = StatusEngine.COMPLETED
+                item.executed = timezone.now()
+                item.save()
 
-            create_dropbox_folders(email=item.email)
+                next_annualreport_reminder(item.email, reportname, reportstate)
+            elif item.process == "Calculate NPS Running":
+                nps_calculator_running()
 
-            print("Dropbox folders are created for " + item.email)
+                print("Running NPS is calculated for " + item.data)
+            elif item.process == "Calculate NPS Onboarding":
+                nps_calculator_onboarding()
 
-            has_run_before = StatusEngine.objects.filter(
-                email=item.email, process=item.process, processstate=item.processstate, outcome=1,
-            ).exists()
+                print("Onboarding NPS is calculated for " + item.data)
+            elif item.processstate == 1:
+                if item.process == "Client Onboarding Survey":
+                    try:
+                        send_client_onboarding_survey(email=item.email)
+                    except Exception as e:
+                        logger.exception(f"Can't process Onboarding NPS Survey for status engine id={item.id}")
 
-            if has_run_before:
-                print(
-                    "Not creating form w9 or emailing pops because dropbox folders job has already run for {}".format(
-                        item.email
+                elif item.process == "Payment error email":
+                    send_transactional_email(
+                        email=item.email, template="[Action required] - Please update your payment information",
                     )
-                )
-        elif item.process == "Annual Report Uploaded" and item.outcome == -1:
+                    print("[Action required] - Please update your payment information email is sent to " + item.email)
+                elif item.process == "Running flow":
+                    ps = ProgressStatus.objects.get(email=item.email)
+                    ps.bookkeepingsetupstatus = "completed"
+                    ps.taxsetupstatus = "completed2"
+                    ps.save()
 
-            reportdetails = item.data.split("---")
-            reportname = reportdetails[1].strip()
-            reportyear = reportdetails[0].strip()
-            reportstate = reportdetails[2].strip() if len(reportdetails) == 3 else None
+                    StatusEngine.objects.get_or_create(
+                        email=item.email,
+                        process="Schedule Email",
+                        formationtype="Hyke Daily",
+                        processstate=1,
+                        outcome=StatusEngine.SCHEDULED,
+                        data="What's upcoming with Collective?",
+                        defaults={"executed": timezone.now() + relativedelta(days=1)},
+                    )
 
-            data_filter = Q(data=f"{reportyear} --- {reportname}")
-            if reportstate:
-                data_filter |= Q(data=f"{reportyear} --- {reportname} --- {reportstate}")
+                    StatusEngine.objects.get_or_create(
+                        email=item.email,
+                        process="Running flow",
+                        formationtype="Hyke System",
+                        processstate=2,
+                        defaults={"outcome": StatusEngine.SCHEDULED, "data": "---"},
+                    )
 
-            SEs = StatusEngine.objects.filter(email=item.email, process="Annual Report Reminder", outcome=-1).filter(
-                data_filter
-            )
-            for se in SEs:
-                se.outcome = 1
-                se.executed = timezone.now()
-                se.save()
+                    schedule_onboarding_survey_sequence(email=item.email)
+                    schedule_next_running_survey_sequence(email=item.email)
 
-            # complete this before we schedule the next reminder
-            item.outcome = StatusEngine.COMPLETED
-            item.executed = timezone.now()
-            item.save()
+                    create_dropbox_folders(email=item.email)
 
-            next_annualreport_reminder(item.email, reportname, reportstate)
-        elif item.process == "Calculate NPS Running" and item.outcome == -1:
-            nps_calculator_running()
+                    print("Dropbox folders are created for " + item.email)
 
-            print("Running NPS is calculated for " + item.data)
-        elif item.process == "Calculate NPS Onboarding" and item.outcome == -1:
-            nps_calculator_onboarding()
+                    has_run_before = StatusEngine.objects.filter(
+                        email=item.email, process=item.process, processstate=item.processstate, outcome=1,
+                    ).exists()
 
-            print("Onboarding NPS is calculated for " + item.data)
+                    if has_run_before:
+                        print(
+                            "Not creating form w9 or emailing pops because dropbox folders job has already run for {}".format(
+                                item.email
+                            )
+                        )
 
-        elif item.process == "Kickoff Questionnaire Completed" and item.processstate == 1 and item.outcome == -1:
-            progress_status = ProgressStatus.objects.filter(email__iexact=item.email).first()
-            if progress_status:
-                progress_status.questionnairestatus = "scheduled"
-                progress_status.save()
 
-                StatusEngine.objects.create(
-                    email=item.email,
-                    processstate=1,
-                    formationtype="Hyke Salesforce",
-                    outcome=-1,
-                    process="Kickoff Questionnaire Completed",
-                    data=item.data,
-                )
+                elif item.process == "Kickoff Questionnaire Completed":
+                    progress_status = ProgressStatus.objects.filter(email__iexact=item.email).first()
+                    if progress_status:
+                        progress_status.questionnairestatus = "scheduled"
+                        progress_status.save()
 
-        elif item.process == "Kickoff Call Scheduled" and item.processstate == 1 and item.outcome == -1:
-            progress_status = ProgressStatus.objects.get(email__iexact=item.email)
-            progress_status.questionnairestatus = "scheduled"
-            progress_status.save()
+                        StatusEngine.objects.create(
+                            email=item.email,
+                            processstate=1,
+                            formationtype="Hyke Salesforce",
+                            outcome=-1,
+                            process="Kickoff Questionnaire Completed",
+                            data=item.data,
+                        )
 
-            StatusEngine.objects.create(
-                email=item.email,
-                processstate=1,
-                formationtype="Hyke Salesforce",
-                outcome=-1,
-                process="Kickoff Call Scheduled",
-                data=item.data,
-            )
+                elif item.process == "Kickoff Call Scheduled":
+                    progress_status = ProgressStatus.objects.get(email__iexact=item.email)
+                    progress_status.questionnairestatus = "scheduled"
+                    progress_status.save()
 
-        elif item.process == "Kickoff Call Cancelled" and item.processstate == 1 and item.outcome == -1:
-            progress_status = ProgressStatus.objects.get(email__iexact=item.email)
-            progress_status.questionnairestatus = "reschedule"
-            progress_status.save()
+                    StatusEngine.objects.create(
+                        email=item.email,
+                        processstate=1,
+                        formationtype="Hyke Salesforce",
+                        outcome=-1,
+                        process="Kickoff Call Scheduled",
+                        data=item.data,
+                    )
 
-            StatusEngine.objects.create(
-                email=item.email,
-                processstate=1,
-                formationtype="Hyke Salesforce",
-                outcome=-1,
-                process="Kickoff Call Cancelled",
-            )
+                elif item.process == "Kickoff Call Cancelled":
+                    progress_status = ProgressStatus.objects.get(email__iexact=item.email)
+                    progress_status.questionnairestatus = "reschedule"
+                    progress_status.save()
 
-        elif (
-            item.process == "Transition Plan Submitted"
-            and item.processstate == 1
-            and item.outcome == StatusEngine.SCHEDULED
-        ):
-            progress_status = ProgressStatus.objects.get(email__iexact=item.email)
-            progress_status.questionnairestatus = "submitted"
-            progress_status.save()
+                    StatusEngine.objects.create(
+                        email=item.email,
+                        processstate=1,
+                        formationtype="Hyke Salesforce",
+                        outcome=-1,
+                        process="Kickoff Call Cancelled",
+                    )
 
-            StatusEngine.objects.create(
-                email=item.email,
-                process="Transition Plan Submitted",
-                formationtype="Hyke Salesforce",
-                processstate=1,
-                outcome=StatusEngine.SCHEDULED,
-                data="---",
-            )
+                elif item.process == "BK Training Call Scheduled":
+                    StatusEngine.objects.create(
+                        email=item.email,
+                        processstate=1,
+                        formationtype="Hyke Salesforce",
+                        outcome=-1,
+                        process="BK Training Call Scheduled",
+                        data=item.data,
+                    )
 
-            StatusEngine.objects.get_or_create(
-                email=item.email,
-                process="Schedule Email",
-                formationtype="Hyke Daily",
-                processstate=1,
-                outcome=StatusEngine.SCHEDULED,
-                data="Welcome to the Collective community!",
-                defaults={"executed": timezone.now() + relativedelta(days=1)},
-            )
+                elif item.process == "BK Training Call Cancelled":
+                    progress_status = ProgressStatus.objects.get(email__iexact=item.email)
+                    progress_status.bookkeepingsetupstatus = "reschedule"
+                    progress_status.save()
 
-        elif item.process == "BK Training Call Scheduled" and item.processstate == 1 and item.outcome == -1:
-            StatusEngine.objects.create(
-                email=item.email,
-                processstate=1,
-                formationtype="Hyke Salesforce",
-                outcome=-1,
-                process="BK Training Call Scheduled",
-                data=item.data,
-            )
+                    status_engine = StatusEngine(
+                        email=item.email,
+                        process="Followup - BK Training",
+                        formationtype="Hyke Daily",
+                        processstate=1,
+                        outcome=-1,
+                        data="---",
+                        executed=timezone.now() + relativedelta(days=2),
+                    )
+                    status_engine.save()
 
-        elif item.process == "BK Training Call Cancelled" and item.processstate == 1 and item.outcome == -1:
-            progress_status = ProgressStatus.objects.get(email__iexact=item.email)
-            progress_status.bookkeepingsetupstatus = "reschedule"
-            progress_status.save()
+                    StatusEngine.objects.create(
+                        email=item.email,
+                        processstate=1,
+                        formationtype="Hyke Salesforce",
+                        outcome=-1,
+                        process="BK Training Call Cancelled",
+                    )
+                elif item.process == "Transition Plan Submitted":
+                    progress_status = ProgressStatus.objects.get(email__iexact=item.email)
+                    progress_status.questionnairestatus = "submitted"
+                    progress_status.save()
 
-            status_engine = StatusEngine(
-                email=item.email,
-                process="Followup - BK Training",
-                formationtype="Hyke Daily",
-                processstate=1,
-                outcome=-1,
-                data="---",
-                executed=timezone.now() + relativedelta(days=2),
-            )
-            status_engine.save()
+                    StatusEngine.objects.create(
+                        email=item.email,
+                        process="Transition Plan Submitted",
+                        formationtype="Hyke Salesforce",
+                        processstate=1,
+                        outcome=StatusEngine.SCHEDULED,
+                        data="---",
+                    )
 
-            StatusEngine.objects.create(
-                email=item.email,
-                processstate=1,
-                formationtype="Hyke Salesforce",
-                outcome=-1,
-                process="BK Training Call Cancelled",
-            )
+                    StatusEngine.objects.get_or_create(
+                        email=item.email,
+                        process="Schedule Email",
+                        formationtype="Hyke Daily",
+                        processstate=1,
+                        outcome=StatusEngine.SCHEDULED,
+                        data="Welcome to the Collective community!",
+                        defaults={"executed": timezone.now() + relativedelta(days=1)},
+                    )
 
     print("Scheduled task is completed for Hyke System...\n")
 
